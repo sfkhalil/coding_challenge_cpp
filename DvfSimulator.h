@@ -36,7 +36,7 @@ public:
 class DvfSimulator : public IDvfSimulator
 {
 public:
-    ~DvfSimulator() noexcept = default;
+    virtual ~DvfSimulator() noexcept = default;
 
     static IDvfSimulator* Create() noexcept
     {
