@@ -5,48 +5,47 @@
 #include <functional>
 
 
-MarketMakerBot::MarketMakerBot(): balanceETH(10), balanceUSD(2000), keepRunning(true) {
-    simulator = DvfSimulator::Create();
+MarketMakerBot::MarketMakerBot(): m_balanceETH(10), m_balanceUSD(2000), m_keepRunning(true) {
+    m_simulator = DvfSimulator::Create();
 }
 
 
 // can take any custom third party client trading algo
 void MarketMakerBot::run(std::function<std::vector<OrderSuggestion>(double, double)> tradingAlgo)
 {
-    clientTradingAlgo = tradingAlgo;
-    balanceDisplayer = std::thread (&MarketMakerBot::displayPortfolio, this);
+    m_clientTradingAlgo = tradingAlgo;
+    m_balanceDisplayer = std::thread (&MarketMakerBot::displayPortfolio, this);
     
     startTrading();
 }
 
 MarketMakerBot::~MarketMakerBot()
 {
-    keepRunning = false;
-    if (balanceDisplayer.joinable())
-        balanceDisplayer.join();
-    delete simulator;
+    m_keepRunning = false;
+    if (m_balanceDisplayer.joinable())
+        m_balanceDisplayer.join();
+    delete m_simulator;
 }
 
 
 
 // cancel orders that may damage your portfolio 
-void MarketMakerBot::cancelOutlierOrders(const double medianBid, const double medianAsk)
+void MarketMakerBot::cancelOutlierOrders(const double bestBid, const double bestAsk)
 {
-    constexpr double sweetSpot = 3.0; // some hacky constant
 
-    auto avgBid = placedBidOrders.lower_bound (OrderSuggestion(medianBid, 1));
-    for (auto it = avgBid; (it != placedBidOrders.end() && it->price > (medianBid - sweetSpot)); ++it ) {
+    auto avgBid = m_placedBidOrders.lower_bound (OrderSuggestion(bestBid, 1));
+    for (auto it = avgBid; (it != m_placedBidOrders.end() && it->price > (bestBid - bestBid * sweetSpotForOrderCancel)); ++it ) {
         std::cout << RED << "[DEBUG] cancelling bid: " << it->price << NC << std::endl ;
-        simulator->CancelOrder(it->orderId);  
+        m_simulator->CancelOrder(it->orderId);  
     }
-    placedBidOrders.erase(avgBid, placedBidOrders.end()); 
+    m_placedBidOrders.erase(avgBid, m_placedBidOrders.end()); 
 
-    auto avgAsk = placedAskOrders.lower_bound (OrderSuggestion(medianAsk, 1));
-    for (auto it = avgAsk; (it != placedAskOrders.end() && it->price < medianAsk + sweetSpot); ++it ) {
+    auto avgAsk = m_placedAskOrders.lower_bound (OrderSuggestion(bestAsk, -1));
+    for (auto it = avgAsk; (it != m_placedAskOrders.end() && it->price < (bestAsk + bestAsk * sweetSpotForOrderCancel)); ++it ) {
         std::cout << RED << "[DEBUG] cancelling ask: " << it->price << NC << std::endl ;
-        simulator->CancelOrder(it->orderId);  
+        m_simulator->CancelOrder(it->orderId);  
     }
-    placedAskOrders.erase(avgAsk, placedAskOrders.end()); 
+    m_placedAskOrders.erase(avgAsk, m_placedAskOrders.end()); 
 
 }
 
@@ -60,33 +59,32 @@ void MarketMakerBot::updatePnL(const double bestBid, const double bestAsk)
         when you execute ask, you want to sell ETH and earn $   */
 
     // Any bid orders that are above the best bid are filled 
-    auto aboveBestBid = placedBidOrders.upper_bound (OrderSuggestion(bestBid, 1));
-    for (auto it = placedBidOrders.begin(); it != aboveBestBid; ++it )
+    auto aboveBestBid = m_placedBidOrders.upper_bound (OrderSuggestion(bestBid, 1));
+    for (auto it = m_placedBidOrders.begin(); it != aboveBestBid; ++it )
     {
-        balanceUSD.store(balanceUSD - it->price * it->amount);
-        balanceETH.store(balanceETH + it->amount);
+        m_balanceUSD.store(m_balanceUSD - it->price * it->amount);
+        m_balanceETH.store(m_balanceETH + it->amount);
     }
-    placedBidOrders.erase(placedBidOrders.begin(), aboveBestBid);
-    // std::erase_if(placedBidOrders, [bestBid](auto x) { return x.price > bestBid; });
+    m_placedBidOrders.erase(m_placedBidOrders.begin(), aboveBestBid);
+    // std::erase_if(m_placedBidOrders, [bestBid](auto x) { return x.price > bestBid; });
 
     // Any sell orders that are below the best ask are filled 
-    auto belowBestAsk = placedAskOrders.lower_bound (OrderSuggestion(bestAsk, 1));
-    for (auto it = belowBestAsk; it != placedAskOrders.end(); ++it ){
-        balanceUSD.store(balanceUSD - it->price * it->amount);
-        balanceETH.store(balanceETH + it->amount);
+    auto belowBestAsk = m_placedAskOrders.lower_bound (OrderSuggestion(bestAsk, 1));
+    for (auto it = belowBestAsk; it != m_placedAskOrders.end(); ++it ){
+        m_balanceUSD.store(m_balanceUSD - it->price * it->amount);
+        m_balanceETH.store(m_balanceETH + it->amount);
     }
-    placedAskOrders.erase(placedAskOrders.begin(), belowBestAsk);
-    // std::erase_if(placedAskOrders, [bestAsk](auto x) { return x.price < bestAsk; });
+    m_placedAskOrders.erase(m_placedAskOrders.begin(), belowBestAsk);
+    // std::erase_if(m_placedAskOrders, [bestAsk](auto x) { return x.price < bestAsk; });
 }
 
 bool MarketMakerBot::creditCheckFailed (const bool isBid, const double usdPrice) const
 {
-    constexpr double sweetness = 3.5;  // some hacky constant that works.
     const bool isAsk = !isBid;
 
-    if (isBid && balanceUSD < usdPrice * sweetness) 
+    if (isBid && m_balanceUSD < usdPrice * sweetSpotForCreditCheck) 
         return true;
-    else if (isAsk && balanceETH < sweetness) 
+    else if (isAsk && m_balanceETH < sweetSpotForCreditCheck) 
         return true;
 
     return false;
@@ -98,11 +96,11 @@ void MarketMakerBot::displayPortfolio() const
     using namespace std::chrono_literals;
     std::string msg;
     msg.reserve(200);
-    while(this->keepRunning) {
+    while(this->m_keepRunning) {
         msg.clear();
         msg.append(GRN).append("\n____________PORTFOLIO SNAPSHOT____________\n ETH: ") 
-            .append(std::to_string(this->balanceETH)).append(" \t USD: ")
-            .append(std::to_string(this->balanceUSD))
+            .append(std::to_string(this->m_balanceETH)).append(" \t USD: ")
+            .append(std::to_string(this->m_balanceUSD))
             .append("\n------------------------------------------\n").append(NC);
         std::cout << msg;
         std::this_thread::sleep_for(PortfolioDisplayThreshold * 1000ms);
@@ -116,9 +114,9 @@ void MarketMakerBot::startTrading()
     std::map<double, double> asks;
     
     // keep trading until broke :) 
-    while (balanceETH > 0.0 || balanceUSD > 0.0 )
+    while (m_balanceETH > 0.0 || m_balanceUSD > 0.0 )
     {
-        auto freshOrderBook = simulator->GetOrderBook();
+        auto freshOrderBook = m_simulator->GetOrderBook();
         bids.clear(); asks.clear();
 
         for(auto& level :freshOrderBook)
@@ -134,7 +132,7 @@ void MarketMakerBot::startTrading()
 
 
         // now make new suggestions 
-        auto newSuggestions = this->clientTradingAlgo(bids.begin()->first, asks.begin()->first);
+        auto newSuggestions = this->m_clientTradingAlgo(bids.begin()->first, asks.begin()->first);
         
         for (auto& suggestion : newSuggestions)
         {
@@ -142,12 +140,12 @@ void MarketMakerBot::startTrading()
             if (creditCheckFailed(isBid, suggestion.price)) 
                 continue;   // bad credit. don't execute suggestion
 
-            auto placedOrder = simulator->PlaceOrder(suggestion.price, suggestion.amount);
+            auto placedOrder = m_simulator->PlaceOrder(suggestion.price, suggestion.amount);
             if (placedOrder.has_value())
             { // order succesfully placed
                 suggestion.orderId = placedOrder.value();
-                isBid   ? placedBidOrders.insert(suggestion)
-                        : placedAskOrders.insert(suggestion);
+                isBid   ? m_placedBidOrders.insert(suggestion)
+                        : m_placedAskOrders.insert(suggestion);
             }
         }
         using namespace std::chrono_literals;

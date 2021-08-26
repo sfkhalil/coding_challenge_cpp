@@ -34,20 +34,20 @@ protected:
 
     void startTrading();
 
-    std::atomic<double> balanceETH;
-    std::atomic<double> balanceUSD;
+    std::atomic<double> m_balanceETH;
+    std::atomic<double> m_balanceUSD;
 
-    std::multiset<OrderSuggestion, std::greater<OrderSuggestion>> placedBidOrders;
-    std::multiset<OrderSuggestion> placedAskOrders;
+    std::multiset<OrderSuggestion, std::greater<OrderSuggestion>> m_placedBidOrders;
+    std::multiset<OrderSuggestion>                                m_placedAskOrders;
 
-    std::function<std::vector<OrderSuggestion>(double, double)> clientTradingAlgo;
+    std::function<std::vector<OrderSuggestion>(double, double)> m_clientTradingAlgo;
 
-    std::thread orderPlacer;
-    std::thread marketDataFetcher;
-    std::thread balanceDisplayer;
+    std::thread m_orderPlacer;
+    std::thread m_marketDataFetcher;
+    std::thread m_balanceDisplayer;
 
-    bool keepRunning;
-    IDvfSimulator * simulator;
+    bool m_keepRunning;
+    IDvfSimulator * m_simulator;
 
 };
 
